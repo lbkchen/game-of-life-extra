@@ -39,3 +39,34 @@
 - DROWNING: Live cells neighboring 6 or more water cells will drown
 - EVAPORATION: Water that is not directly adjacent to other water cells will evaporate the next tick
 """
+import pygame
+
+class Cell(object):
+    """A cell in the game."""
+    def __init__(self, world, row, col, identity="inactive"):
+        """Initializes a cell in a certain world object at position (row, col)"""
+        self.world = world
+        self.row = row
+        self.col = col
+        self.identity = identity
+
+    def __repr__(self):
+        return "Cell(%s, %s, %s, '%s')" %(repr(self.world), self.row, self.col, self.identity)
+
+    def __str__(self):
+        return self.identity
+
+class World(object):
+    """The board that represents the game world."""
+    def __init__(self, name, rows, cols):
+        self.name = name
+        self.rows = rows
+        self.cols = cols
+        # self.cells = {(i, j) : Cell(self, i, j) for i in range(rows) for j in range(cols)}
+        self.cells = [[Cell(self, i, j) for j in range(cols)] for i in range(rows)]
+
+    def __repr__(self):
+        return "World('%s', %s, %s)" %(self.name, self.rows, self.cols)
+
+    def __str__(self):
+        return "World %s [%s x %s]" %(self.name, self.rows, self.cols)
