@@ -30,12 +30,12 @@
 # Extra
 """
 - BURNOUT: Fire that is not directly adjacent to other fire cells will extinguish the next tick
-- SPREADING FIRE: Active/inactive cells neighboring 4 or more fire cells will become a fire cell
+- SPREADING FIRE: Inactive cells neighboring 4 or more fire cells will become a fire cell
 - SCORCH: Any live cell directly adjacent (no corners) to fire will die the next tick
 - FIREFIGHTER: Any fire cell neighboring two or more live cells but not directly
     adjacent will turn into a water cell
-- ABLAZE: Hospital cells neighboring 4 or more fire cells will be burnt down (-> active)
-- EXTINGUISH: Fire cells neighboring water cells will be extinguished (-> active)
+- ABLAZE: Hospital cells neighboring 4 or more fire cells will be burnt down (-> inactive)
+- EXTINGUISH: Fire cells neighboring water cells will be extinguished (-> inactive)
 - DROWNING: Live cells neighboring 6 or more water cells will drown
 - EVAPORATION: Water that is not directly adjacent to other water cells will evaporate the next tick
 """
@@ -48,7 +48,7 @@ import math
 
 # Define some colors
 BLACK = (0, 0, 0)
-GRAY = (40, 40, 40)
+GRAY = (225, 225, 225)
 WHITE = (255, 255, 255)
 GREEN = (0, 255, 0)
 RED = (245, 50, 95)
@@ -61,7 +61,7 @@ GRID_COLOR = GRAY
 
 MAX_SCREEN_WIDTH = 1200
 MAX_SCREEN_HEIGHT = 600
-GRID_SPACING = 1
+GRID_SPACING = 2
 
 FRAMERATE = 2
 
@@ -146,8 +146,17 @@ class Cell(pygame.sprite.Sprite):
         return neighbors
 
     def set_neighbors(self):
-        """Sets an instance attribute neighbors to the result of getting neighbors."""
-        self.neighbors = self.get_neighbors()
+        """Sets instance attribute neighbors/adjacent/diagonals to the result of
+        calling the respective functions."""
+        neighbors, more = self.get_adjacent(), self.get_diagonals()
+        self.adjacent, self.diagonals = neighbors, more
+        for identity in more:
+            if identity in neighbors:
+                neighbors[identity] += more[identity]
+            else:
+                neighbors.update({identity : more[identity]})
+
+        self.neighbors = neighbors
 
     def revive(self):
         """Turns a cell's identity to live in the cell's world."""
@@ -163,34 +172,103 @@ class Cell(pygame.sprite.Sprite):
     ########################
 
     # only returns the identity of the resulting cell
-    def apply_solitude(self, neighbors):
+    # neighbors/adjaent/diagonals of cells must be cached beforehand
+    def apply_solitude(self):
         """Applies the solitude rule: removes a live cell if it has fewer than
-        2 live cell neighbors."""
+        2 live cell self.neighbors."""
         assert self.identity == "live", "Solitude can only be applied to live cells."
-        if "live" not in neighbors:
+        if "live" not in self.neighbors:
             return "inactive"
-        elif neighbors["live"] < 2:
+        elif self.neighbors["live"] < 2:
             return "inactive"
         else:
             return "live"
 
-    def apply_overpopulation(self, neighbors):
+    def apply_overpopulation(self):
         """Applies the overpopulation rule: removes a live cell with more than
-        3 live neighbors."""
+        3 live self.neighbors."""
         assert self.identity == "live", "Overpopulation can only be applied to live cells."
-        if "live" in neighbors and neighbors["live"] > 3:
+        if "live" in self.neighbors and self.neighbors["live"] > 3:
             return "inactive"
         else:
             return "live"
 
-    def apply_reproduction(self, neighbors):
+    def apply_reproduction(self):
         """Applies the reproduction rule: an inactive cell becomes live if it has
-        exactly 3 live neighbors."""
+        exactly 3 live self.neighbors."""
         assert self.identity == "inactive", "Reproduction can only be applied to inactive cells."
-        if "live" in neighbors and neighbors["live"] == 3:
+        if "live" in self.neighbors and self.neighbors["live"] == 3:
             return "live"
         else:
             return "inactive"
+
+    def apply_burnout(self):
+        """Applies the burnout rule: fire that is not directly adjacent to other
+        fire cells will extinguish the next tick."""
+        assert self.identity == "fire", "Burnout can only be applied to fire cells."
+        if "fire" not in self.adjacent:
+            return "inactive"
+        else:
+            return "fire"
+
+    def apply_spreading_fire(self):
+        """Applies the spreading fire rule: inactive cells neighboring 4 or more
+        fire cells will become a fire cell."""
+        assert self.identity == "inactive", "Spreading fire can only be applied to inactive cells."
+        if "fire" in self.neighbors and self.neighbors["fire"] >= 4:
+            return "fire"
+        else:
+            return "inactive"
+
+    def apply_scorch(self):
+        """Applies the scorch rule: any live cell directly adjacent (no corners)
+        to fire will die the next tick."""
+        assert self.identity == "live", "Spreading fire can only be applied to live cells."
+        if "fire" in self.adjacent:
+            return "inactive"
+        else:
+            return "live"
+
+    def apply_firefighter(self):
+        """Applies the firefighter rule: any fire cell neighboring two or more
+        live cells but not directly adjacent will turn into a water cell."""
+        assert self.identity == "fire", "Firefighter can only be applied to fire cells."
+        if "live" in self.diagonals and self.diagonals["live"] >= 2:
+            return "water"
+        else:
+            return "fire"
+
+    def apply_extinguish(self):
+        """Applies the extinguish rule: fire cells neighboring water cells will
+        be extinguished (-> inactive)."""
+        assert self.identity == "fire", "Extinguish can only be applied to fire cells."
+        if "water" in self.neighbors:
+            return "inactive"
+        else:
+            return "fire"
+
+    def apply_drowning(self):
+        """Applies the drowning rule: live cells neighboring 6 or more water
+        cells will drown."""
+        assert self.identity == "live", "Drowning can only be applied to live cells."
+        if "water" in self.neighbors and self.neighbors["water"] >= 6:
+            return "inactive"
+        else:
+            return "live"
+
+    def apply_evaporation(self):
+        """Applies the evaporation rule: water that is not directly adjacent to
+        other water cells will evaporate the next tick."""
+        assert self.identity == "water", "Evaporation can only be applied to water cells."
+        if "water" not in self.adjacent:
+            return "inactive"
+        else:
+            return "water"
+
+# class InactiveCell(Cell):
+#     color = WHITE
+#     def __init__(self, world, row, col):
+#         Cell.__init__(self, world, row, col, identity="inactive")
 
 class World(object):
     """The board that represents the game world."""
@@ -236,13 +314,15 @@ class World(object):
                 self.change_cell_identity(initial_cell_type, i, j)
 
     def cache_neighbors(self):
-        """Sets the instance variable neighbors of the World's Cells to the result
-        of get_neighbors."""
+        """Sets the instance variables neighbors/adjacent/diagonals of the
+        World's Cells."""
         for row in self.cells:
             for cell in row:
                 cell.set_neighbors()
 
     def cache_static(self):
+        """Caches information about whether each cell should be updated (apply
+        rules and blit)."""
         for row in self.cells:
             for cell in row:
                 cell.static = cell.is_static()
@@ -266,10 +346,9 @@ class World(object):
             for j in range(self.cols):
                 this_cell = self.get_cell(i, j)
                 result_identity = this_cell.identity
-                # neighbors = this_cell.get_neighbors()
                 if not this_cell.static: # not only inactive cells surrounding
                     for rule in RULES[this_cell.identity]:
-                        result_identity = rule(this_cell, this_cell.neighbors)
+                        result_identity = rule(this_cell)
                         if result_identity != this_cell.identity: # breaks on first identity change
                             break
                 this_cell.ticks += 1
@@ -311,9 +390,6 @@ class Display(pygame.sprite.Sprite):
             [self.world.cols * (self.cell_size + GRID_SPACING) + GRID_SPACING,
             self.world.rows * (self.cell_size + GRID_SPACING) + GRID_SPACING]]
 
-    def update_rects(self):
-        """Updates the dirty_rects of the Display."""
-
     def get_cell_rect(self, cell):
         """Gets the rect of a cell."""
         x_coor = cell.col * (self.cell_size + GRID_SPACING) + GRID_SPACING
@@ -336,6 +412,8 @@ class Display(pygame.sprite.Sprite):
         for row in self.world.cells:
             for cell in row:
                 self.draw_cell(cell)
+        self.clock.tick(FRAMERATE)
+        pygame.display.update()
 
     def draw_world(self):
         """Blits the world to the screen."""
@@ -381,17 +459,32 @@ COLORS = {
 
 # Comment rules to deactivate them for the game
 INACTIVE_RULES = [
-    Cell.apply_reproduction
+    Cell.apply_reproduction,
+    Cell.apply_spreading_fire
 ]
 
 LIVE_RULES = [
     Cell.apply_solitude,
-    Cell.apply_overpopulation
+    Cell.apply_overpopulation,
+    Cell.apply_scorch,
+    Cell.apply_drowning
+]
+
+FIRE_RULES = [
+    Cell.apply_burnout,
+    Cell.apply_firefighter,
+    Cell.apply_extinguish
+]
+
+WATER_RULES = [
+    Cell.apply_evaporation
 ]
 
 RULES = {
     "inactive": INACTIVE_RULES,
-    "live": LIVE_RULES
+    "live": LIVE_RULES,
+    "fire": FIRE_RULES,
+    "water": WATER_RULES
 }
 
 sample_initial = [
@@ -406,31 +499,19 @@ sample_initial = [
 [0 for i in range(14)]
 ]
 
-# sample_initial = [
-# [1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0],
-# [0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0],
-# [0 for i in range(14)],
-# [0 for i in range(14)],
-# [0 for i in range(14)],
-# [0 for i in range(14)],
-# [0 for i in range(14)],
-# [0 for i in range(14)],
-# [0 for i in range(14)]
-# ]
-
 sample_initial = [
     [0 for i in range(30)],
     [0 for i in range(30)],
     [0 for i in range(30)],
-    [0 for i in range(30)],
-    [0 for i in range(30)],
-    [0 for i in range(30)],
-    [0 for i in range(30)],
+    [2] + [0 for i in range(29)],
+    [2, 2, 2, 2] + [0 for i in range(26)],
+    [2, 2, 2, 2] + [0 for i in range(26)],
+    [2] + [0 for i in range(29)],
     [0 for i in range(30)],
     [1 for i in range(30)],
     [0 for i in range(14)] + [1, 1] + [0 for i in range(14)],
     [1 for i in range(30)],
-    [0 for i in range(30)],
+    [3 for i in range(30)],
     [0 for i in range(30)],
     [0 for i in range(30)],
     [0 for i in range(30)],
@@ -440,6 +521,7 @@ sample_initial = [
     [0 for i in range(30)],
     [0 for i in range(30)]
 ]
+
 #############
 # GAME LOOP #
 #############
