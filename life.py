@@ -63,7 +63,7 @@ MAX_SCREEN_WIDTH = 1200
 MAX_SCREEN_HEIGHT = 600
 GRID_SPACING = 1
 
-FRAMERATE = 100
+FRAMERATE = 2
 
 
 class Cell(pygame.sprite.Sprite):
@@ -77,11 +77,7 @@ class Cell(pygame.sprite.Sprite):
         self.identity = identity
         self.ticks = 0
 
-        self.static = True #FIXME could be buggy
-        # self.top_border = (row == 0)
-        # self.bottom_border = (row == world.rows - 1)
-        # self.left_border = (col == 0)
-        # self.right_border = (col == world.cols - 1)
+        self.neighbors = {}
 
     def __repr__(self):
         return "Cell(%s, %s, %s, '%s')" %(repr(self.world), self.row, self.col, self.identity)
@@ -94,10 +90,10 @@ class Cell(pygame.sprite.Sprite):
         """Returns whether the cell is updated with the current world"""
         return self.ticks == self.world.ticks
 
-    def is_static(self, neighbors):
-        """Returns whether the cell should be static, based on its neighbors.
-        (Itself and neighbors are all inactive cells)"""
-        return self.identity == "inactive" and "inactive" in neighbors and len(neighbors) == 1
+    def is_static(self):
+        """MUST CALL cache_neighbors BEFORE! Returns whether the cell should be static,
+        based on its neighbors. (Itself and neighbors are all inactive cells)"""
+        return self.identity == "inactive" and "inactive" in self.neighbors and len(self.neighbors) == 1
 
     #####################
     # UTILITY FUNCTIONS #
@@ -149,6 +145,10 @@ class Cell(pygame.sprite.Sprite):
 
         return neighbors
 
+    def set_neighbors(self):
+        """Sets an instance attribute neighbors to the result of getting neighbors."""
+        self.neighbors = self.get_neighbors()
+
     def revive(self):
         """Turns a cell's identity to live in the cell's world."""
         assert self.identity == "inactive" or self.identity == "diseased", "Cannot apply revive to %s cell" %self.identity
@@ -161,29 +161,6 @@ class Cell(pygame.sprite.Sprite):
     ########################
     # RULE IMPLEMENTATIONS #
     ########################
-
-    # def apply_solitude(self, neighbors):
-    #     """Applies the solitude rule: removes a live cell if it has fewer than
-    #     2 live cell neighbors."""
-    #     assert self.identity == "live", "Solitude can only be applied to live cells."
-    #     if "live" not in neighbors:
-    #         self.remove()
-    #     elif neighbors["live"] < 2:
-    #         self.remove()
-    #
-    # def apply_overpopulation(self, neighbors):
-    #     """Applies the overpopulation rule: removes a live cell with more than
-    #     3 live neighbors."""
-    #     assert self.identity == "live", "Overpopulation can only be applied to live cells."
-    #     if "live" in neighbors and neighbors["live"] > 3:
-    #         self.remove()
-    #
-    # def apply_reproduction(self, neighbors):
-    #     """Applies the reproduction rule: an inactive cell becomes live if it has
-    #     exactly 3 live neighbors."""
-    #     assert self.identity == "inactive", "Reproduction can only be applied to inactive cells."
-    #     if "live" in neighbors and neighbors["live"] == 3:
-    #         self.revive()
 
     # only returns the identity of the resulting cell
     def apply_solitude(self, neighbors):
@@ -224,6 +201,8 @@ class World(object):
         self.cells = [[Cell(self, i, j) for j in range(cols)] for i in range(rows)]
         self.ticks = 0
 
+        self.setup_cells()
+
     def __repr__(self):
         return "World('%s', %s, %s)" %(self.name, self.rows, self.cols)
 
@@ -256,23 +235,43 @@ class World(object):
                 initial_cell_type = CELLS[initial[i][j]]
                 self.change_cell_identity(initial_cell_type, i, j)
 
+    def cache_neighbors(self):
+        """Sets the instance variable neighbors of the World's Cells to the result
+        of get_neighbors."""
+        for row in self.cells:
+            for cell in row:
+                cell.set_neighbors()
+
+    def cache_static(self):
+        for row in self.cells:
+            for cell in row:
+                cell.static = cell.is_static()
+
+    def setup_cells(self):
+        """Caches the neighbors of cells and determines which ones are static."""
+        self.cache_neighbors()
+        self.cache_static()
+
     #######################
     # GAME LOOP FUNCTIONS #
     #######################
 
     def tick(self):
         """Updates the world board after one tick has passed."""
+        self.setup_cells()
+
         updated = []
         for i in range(self.rows):
             this_row = []
             for j in range(self.cols):
                 this_cell = self.get_cell(i, j)
                 result_identity = this_cell.identity
-                neighbors = this_cell.get_neighbors()
-                if not this_cell.is_static(neighbors): # not only inactive cells surrounding
-                    this_cell.static = False
+                # neighbors = this_cell.get_neighbors()
+                if not this_cell.static: # not only inactive cells surrounding
                     for rule in RULES[this_cell.identity]:
-                        result_identity = rule(this_cell, neighbors)
+                        result_identity = rule(this_cell, this_cell.neighbors)
+                        if result_identity != this_cell.identity: # breaks on first identity change
+                            break
                 this_cell.ticks += 1
                 this_row.append(CELLS_INDEX[result_identity])
             updated.append(this_row)
@@ -298,7 +297,7 @@ class Display(pygame.sprite.Sprite):
         self.clock = pygame.time.Clock()
 
         # Used to update position of cells
-        self.dirty_rects = []
+        self.dirty_rects = [pygame.Rect(0, 0, self.screen_size[0], self.screen_size[1])]
 
     def get_cell_size(self):
         """Returns the side length (pixels) of each cell based on screen/grid bounds."""
@@ -312,18 +311,25 @@ class Display(pygame.sprite.Sprite):
             [self.world.cols * (self.cell_size + GRID_SPACING) + GRID_SPACING,
             self.world.rows * (self.cell_size + GRID_SPACING) + GRID_SPACING]]
 
+    def update_rects(self):
+        """Updates the dirty_rects of the Display."""
+
+    def get_cell_rect(self, cell):
+        """Gets the rect of a cell."""
+        x_coor = cell.col * (self.cell_size + GRID_SPACING) + GRID_SPACING
+        y_coor = cell.row * (self.cell_size + GRID_SPACING) + GRID_SPACING
+        return pygame.Rect(x_coor, y_coor, self.cell_size, self.cell_size)
+
     def draw_cell(self, cell):
         """Blits a cell to the screen."""
         color = COLORS[cell.identity]
-        x_coor = cell.col * (self.cell_size + GRID_SPACING) + GRID_SPACING
-        y_coor = cell.row * (self.cell_size + GRID_SPACING) + GRID_SPACING
 
         cell_surface = pygame.Surface((self.cell_size, self.cell_size)).convert()
         cell_surface.fill(color)
-        cell_rect = cell_surface.get_rect()
+        cell_rect = self.get_cell_rect(cell)
         self.dirty_rects.append(cell_rect)
 
-        self.screen.blit(cell_surface, (x_coor, y_coor))
+        self.screen.blit(cell_surface, cell_rect)
 
     def draw_initial(self):
         """Blits the initial world to the screen."""
@@ -340,11 +346,13 @@ class Display(pygame.sprite.Sprite):
 
     def update(self):
         """Ticks the world and updates the screen."""
-        self.dirty_rects = []
+        self.dirty_rects, old = [], self.dirty_rects
         self.world.tick()
         self.draw_world()
+
         self.clock.tick(FRAMERATE)
-        pygame.display.update(self.dirty_rects)
+        pygame.display.update(self.dirty_rects + old)
+        print(self.world)
 
 #################
 # CELLS & RULES #
@@ -398,6 +406,40 @@ sample_initial = [
 [0 for i in range(14)]
 ]
 
+# sample_initial = [
+# [1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0],
+# [0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0],
+# [0 for i in range(14)],
+# [0 for i in range(14)],
+# [0 for i in range(14)],
+# [0 for i in range(14)],
+# [0 for i in range(14)],
+# [0 for i in range(14)],
+# [0 for i in range(14)]
+# ]
+
+sample_initial = [
+    [0 for i in range(30)],
+    [0 for i in range(30)],
+    [0 for i in range(30)],
+    [0 for i in range(30)],
+    [0 for i in range(30)],
+    [0 for i in range(30)],
+    [0 for i in range(30)],
+    [0 for i in range(30)],
+    [1 for i in range(30)],
+    [0 for i in range(14)] + [1, 1] + [0 for i in range(14)],
+    [1 for i in range(30)],
+    [0 for i in range(30)],
+    [0 for i in range(30)],
+    [0 for i in range(30)],
+    [0 for i in range(30)],
+    [0 for i in range(30)],
+    [0 for i in range(30)],
+    [0 for i in range(30)],
+    [0 for i in range(30)],
+    [0 for i in range(30)]
+]
 #############
 # GAME LOOP #
 #############
@@ -412,7 +454,6 @@ def play(rows, cols, initial):
     world.initialize(initial)
 
     display = Display(world)
-    world.tick()
     display.draw_initial()
 
     # Main game loop
@@ -429,4 +470,5 @@ def play(rows, cols, initial):
         display.update()
     pygame.quit()
 
-play(9, 14, sample_initial)
+# play(9, 14, sample_initial)
+play(20, 30, sample_initial)
