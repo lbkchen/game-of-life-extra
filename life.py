@@ -59,11 +59,11 @@ DARK_YELLOW = (255, 200, 15)
 BACKGROUND_COLOR = WHITE
 GRID_COLOR = GRAY
 
-MAX_SCREEN_WIDTH = 1200
-MAX_SCREEN_HEIGHT = 600
+MAX_SCREEN_WIDTH = 1400
+MAX_SCREEN_HEIGHT = 800
 GRID_SPACING = 2
 
-FRAMERATE = 2
+FRAMERATE = 5
 
 
 class Cell(pygame.sprite.Sprite):
@@ -77,6 +77,8 @@ class Cell(pygame.sprite.Sprite):
         self.identity = identity
         self.ticks = 0
 
+        # cached later by World.setup_cells
+        self.static = None
         self.neighbors = {}
 
     def __repr__(self):
@@ -270,6 +272,7 @@ class Cell(pygame.sprite.Sprite):
 #     def __init__(self, world, row, col):
 #         Cell.__init__(self, world, row, col, identity="inactive")
 
+
 class World(object):
     """The board that represents the game world."""
     def __init__(self, name, rows, cols):
@@ -284,9 +287,14 @@ class World(object):
     def __repr__(self):
         return "World('%s', %s, %s)" %(self.name, self.rows, self.cols)
 
+    # def __str__(self):
+    #     "Print version"
+    #     rows = [" ".join(list(map(lambda cell: str(CELLS_INDEX[cell.identity]), row))) for row in self.cells]
+    #     return "\n".join(rows)
+
     def __str__(self):
-        rows = [" ".join(list(map(lambda cell: str(CELLS_INDEX[cell.identity]), row))) for row in self.cells]
-        return "\n".join(rows)
+        "The list version"
+        return str([list(map(lambda cell: CELLS_INDEX[cell.identity], row)) for row in self.cells])
 
     def get_cell(self, row, col):
         """Returns the cell at position (row, col)."""
@@ -295,6 +303,11 @@ class World(object):
     def change_cell_identity(self, new, row, col):
         """Changes the cell identity at position (row, col) with the new one."""
         self.cells[row][col].identity = new
+
+    def change_this_cell_identity(self, new, cell):
+        """Changes the cell identity of an existing cell."""
+        assert cell.world == self, "The cell does not exist in this world."
+        self.change_cell_identity(new, cell.row, cell.col)
 
     def replace_cell(self, new, row, col):
         """Replaces the cell at position (row, col) with the new cell."""
@@ -357,6 +370,7 @@ class World(object):
 
         self.initialize(updated)
         self.ticks += 1
+
 
 class Display(pygame.sprite.Sprite):
     """A Display object that renders a world. There can only be one Display instance."""
@@ -422,6 +436,10 @@ class Display(pygame.sprite.Sprite):
                 if not cell.static:
                     self.draw_cell(cell)
 
+    def refresh(self):
+        """Updates the screen without ticking the world."""
+        self.draw_initial()
+
     def update(self):
         """Ticks the world and updates the screen."""
         self.dirty_rects, old = [], self.dirty_rects
@@ -430,7 +448,68 @@ class Display(pygame.sprite.Sprite):
 
         self.clock.tick(FRAMERATE)
         pygame.display.update(self.dirty_rects + old)
-        print(self.world)
+        # print(self.world)
+        print(self.world.ticks)
+
+
+class Drawing(pygame.sprite.Sprite):
+    """An object that represents the game board in the drawing stage."""
+    def __init__(self, display):
+        self.display = display
+        self.current = "live" # represents live cell
+        self.mutable = self.get_mutable_cells()
+        self.hitboxes = self.get_hitboxes()
+        self.final_board()
+
+    def get_mutable_cells(self):
+        """Returns a list of all mutable (paintable) cells on the sceen."""
+        mutable = []
+        for row in self.display.world.cells:
+            for cell in row:
+                if cell.identity == "inactive":
+                    mutable.append(cell)
+        return mutable
+
+    def get_hitboxes(self):
+        """Returns a list of the hitboxes of all inactive cells on the sceen."""
+        return [self.display.get_cell_rect(cell) for cell in self.mutable]
+
+    def check_mouseover(self):
+        """Called when mouse button is pressed. Returns the cell that the mouse
+        is currently hovering over, or None."""
+        pos = pygame.mouse.get_pos()
+        for cell in self.mutable:
+            if self.display.get_cell_rect(cell).collidepoint(pos):
+                return cell
+
+    def paint_cell(self):
+        """Paints the cell that the mouse is currently over, or does nothing if
+        the operation can't be done."""
+        possible_cell = self.check_mouseover()
+        if possible_cell:
+            self.display.world.change_this_cell_identity(self.current, possible_cell)
+            self.display.refresh()
+        print(self.display.world)
+        print("\n\n")
+
+    def final_board(self):
+        """Returns a list of lists that represents the final board to start the
+        current game with."""
+        drawing = True
+        while drawing:
+            for event in pygame.event.get():
+                if event.type == pygame.KEYDOWN and event.key == pygame.K_RETURN:
+                    drawing = False
+                if event.type == pygame.KEYDOWN and event.key == pygame.K_0:
+                    self.current = "inactive"
+                if event.type == pygame.KEYDOWN and event.key == pygame.K_1:
+                    self.current = "live"
+                if event.type == pygame.KEYDOWN and event.key == pygame.K_2:
+                    self.current = "fire"
+                if event.type == pygame.KEYDOWN and event.key == pygame.K_3:
+                    self.current = "water"
+                if event.type == pygame.MOUSEBUTTONDOWN:
+                    self.paint_cell()
 
 #################
 # CELLS & RULES #
@@ -487,41 +566,8 @@ RULES = {
     "water": WATER_RULES
 }
 
-sample_initial = [
-[1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0],
-[0, 0, 0, 1, 0, 1, 0, 1, 1, 0, 0, 0, 0, 0],
-[0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0],
-[0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0],
-[0 for i in range(14)],
-[0 for i in range(14)],
-[0 for i in range(14)],
-[0 for i in range(14)],
-[0 for i in range(14)]
-]
-
-sample_initial = [
-    [0 for i in range(30)],
-    [0 for i in range(30)],
-    [0 for i in range(30)],
-    [2] + [0 for i in range(29)],
-    [2, 2, 2, 2] + [0 for i in range(26)],
-    [2, 2, 2, 2] + [0 for i in range(26)],
-    [2] + [0 for i in range(29)],
-    [0 for i in range(30)],
-    [1 for i in range(30)],
-    [0 for i in range(14)] + [1, 1] + [0 for i in range(14)],
-    [1 for i in range(30)],
-    [3 for i in range(30)],
-    [0 for i in range(30)],
-    [0 for i in range(30)],
-    [0 for i in range(30)],
-    [0 for i in range(30)],
-    [0 for i in range(30)],
-    [0 for i in range(30)],
-    [0 for i in range(30)],
-    [0 for i in range(30)]
-]
-
+sample_initial = [[0 for i in range(30)] for j in range(20)]
+sample_initial = [[0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1], [1, 0, 2, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 2, 1, 1], [0, 2, 0, 0, 0, 0, 0, 0, 3, 3, 0, 0, 0, 2, 2, 2, 0, 0, 0, 3, 3, 0, 0, 0, 0, 0, 0, 0, 2, 1], [0, 2, 0, 2, 2, 0, 1, 1, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 3, 0, 1, 0, 0, 2, 2, 0, 2, 0], [0, 2, 0, 2, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 2, 0, 2, 0], [0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 2, 0, 0, 1, 0, 0, 2, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0], [0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0], [0, 0, 0, 0, 1, 0, 0, 0, 0, 2, 0, 0, 0, 2, 0, 2, 0, 0, 0, 2, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0], [0, 0, 1, 1, 0, 0, 0, 0, 2, 0, 0, 0, 2, 0, 2, 0, 2, 0, 0, 0, 2, 0, 0, 0, 0, 1, 1, 1, 0, 0], [0, 1, 0, 1, 0, 1, 0, 2, 2, 2, 2, 2, 0, 2, 0, 2, 0, 2, 2, 2, 2, 2, 0, 0, 0, 1, 1, 0, 1, 0], [0, 1, 1, 1, 1, 0, 0, 0, 2, 0, 0, 0, 2, 0, 2, 0, 2, 0, 0, 0, 2, 0, 0, 0, 0, 1, 1, 1, 0, 0], [0, 0, 1, 0, 0, 0, 1, 0, 0, 2, 0, 0, 0, 2, 0, 2, 0, 0, 0, 2, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0], [0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0], [0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0], [0, 2, 0, 2, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 2, 0], [0, 2, 0, 2, 2, 0, 0, 0, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 3, 0, 0, 0, 0, 2, 2, 0, 2, 0], [1, 2, 0, 0, 0, 0, 0, 0, 3, 3, 0, 0, 0, 2, 2, 2, 0, 0, 0, 3, 3, 0, 0, 0, 0, 0, 0, 0, 2, 1], [1, 1, 2, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 2, 0, 1], [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1]]
 #############
 # GAME LOOP #
 #############
@@ -537,6 +583,9 @@ def play(rows, cols, initial):
 
     display = Display(world)
     display.draw_initial()
+
+    # Drawing loop
+    drawing_board = Drawing(display)
 
     # Main game loop
     while not done:
